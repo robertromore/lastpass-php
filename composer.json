@@ -1,0 +1,17 @@
+{
+  "name": "robertromore/lastpass-php",
+  "type": "library",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Robert Romore",
+      "email": "r.romore@gmail.com"
+    }
+  ],
+  "require": {
+    "phpseclib/phpseclib": "2.0.4"
+  },
+  "autoload": {
+    "classmap": ["LastPass.php"]
+  }
+}
