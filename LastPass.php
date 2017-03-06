@@ -1,6 +1,13 @@
 <?php
 
 /**
+ * @file
+ * LastPass-PHP library, designed to retrieve account information from LastPass.
+ * @version 1.0.1
+ * @license MIT
+ */
+
+/**
  * Lastpass CLI version, used when sending request to LastPass.
  */
 define('LASTPASS_CLI_VERSION', '1.1.2');
@@ -496,7 +503,8 @@ class LPBlob {
 
     $item = new stdClass();
     $item->length = mb_substr($chunk->data, $chunk->position, 4, '8bit');
-    $item->length = reset(unpack("N", $item->length));
+    $item->length = unpack("N", $item->length);
+    $item->length = reset($item->length);
     $chunk->position += 4;
     if ($item->length > $chunk->length || $chunk->position >= $chunk->length - 4) {
       return FALSE;
@@ -601,13 +609,15 @@ class LPCipher {
       static::$aes->mode = $mode;
     }
 
+    $start = 0;
     if ($mode == 2) {
-      static::$aes->setIV(substr($ciphertext, 1, 16));
+      static::$aes->setIV(mb_substr($ciphertext, 1, 16, '8bit'));
+      $start = 17;
     }
 
     static::$aes->disablePadding();
     static::$aes->setKey($key);
-    $ciphertext = mb_substr($ciphertext, 17, $len - 17, '8bit');
+    $ciphertext = mb_substr($ciphertext, $start, $len - $start, '8bit');
     $plaintext = static::$aes->decrypt($ciphertext);
 
     return $plaintext;
@@ -1125,69 +1135,108 @@ class LastPass {
   }
 
   /**
+   * Returns the currently set session.
+   *
+   * @return object
+   *   The current session.
+   */
+  public function getSession() {
+    if (empty($this->session)) {
+      if (session_status() == PHP_SESSION_NONE) {
+        session_start();
+      }
+
+      if (isset($_SESSION['lastpass'])) {
+        $this->session = $_SESSION['lastpass'];
+      }
+    }
+
+    return $this->session;
+  }
+
+  /**
+   * Returns if the user is logged in or not.
+   *
+   * @return bool
+   *   TRUE if the user is logged in to LastPass, FALSE otherwise.
+   */
+  public function isLoggedIn() {
+    $this->getSession();
+    return !empty($this->session);
+  }
+
+  /**
    * Sends a login request to LastPass and saves the result in session.
    */
   public function login() {
     if (empty($this->username) || empty($this->password)) {
-      throw new Exception("Your username and password must be set before a request to login can be made.");
+      throw new LastPassException("Your username and password must be set before a request to login can be made.");
     }
 
-    try {
+    if (session_status() == PHP_SESSION_NONE) {
       session_start();
+    }
 
-      if (!empty($_SESSION['lastpass'])) {
-        $this->session = $_SESSION['lastpass'];
-        $this->iterations = $this->session['iterations'];
-        $this->loginKey = $this->session['loginKey'];
-        $this->decryptionKey = $this->session['decryptionKey'];
-      }
-      else {
-        $this->getIterations();
-      }
-
-      if (empty($this->session)) {
-        $this->loginKey = $this->generateLoginKey($this->username, $this->password, $this->iterations);
-        $this->decryptionKey = $this->generateDecryptionKey($this->username, $this->password, $this->iterations);
-
-        $params = array(
-          'xml' => '2',
-          'username' => $this->username,
-          'hash' => $this->loginKey,
-          'iterations' => $this->iterations,
-          'includeprivatekeyenc' => 1,
-          'method' => 'cli',
-          'outofbandsupported' => 1,
-        );
-        $response = $this->request('login', $params);
-        $xml = simplexml_load_string($response);
-        $xml = json_decode(json_encode($xml));
-        if (!empty($xml->ok)) {
-          // Save the session information.
-          $root = $xml->ok->{'@attributes'};
-          $this->session = array(
-            'uid' => $root->uid,
-            'sessionid' => $root->sessionid,
-            'privatekeyenc' => $root->privatekeyenc,
-            'lpusername' => $root->lpusername,
-            'email' => $root->email,
-            'pwdeckey' => $root->pwdeckey,
-            'token' => $root->token,
-            'iterations' => $root->iterations,
-            'logloginsvr' => $root->logloginsvr,
-            'loginKey' => $this->loginKey,
-            'decryptionKey' => $this->decryptionKey,
-          );
-          $_SESSION['lastpass'] = $this->session;
+    if (!empty($_SESSION['lastpass'])) {
+      $this->session = $_SESSION['lastpass'];
+      $session_fields = array('iterations', 'loginKey', 'decryptionKey');
+      foreach ($session_fields as $sf) {
+        if (!empty($this->session[$sf])) {
+          $this->{$sf} = $this->session[$sf];
         }
       }
+    }
+    else {
+      $this->getIterations();
+    }
 
-      if (empty($this->session['privatekey'])) {
-        $this->session['privatekey'] = $_SESSION['lastpass']['privatekey'] = LPCipher::cipherDecryptPrivateKey($this->session['privatekeyenc'], $this->decryptionKey);
+    if (empty($this->session)) {
+      $this->loginKey = $this->generateLoginKey($this->username, $this->password, $this->iterations);
+      $this->decryptionKey = $this->generateDecryptionKey($this->username, $this->password, $this->iterations);
+
+      $params = array(
+        'xml' => '2',
+        'username' => $this->username,
+        'hash' => $this->loginKey,
+        'iterations' => $this->iterations,
+        'includeprivatekeyenc' => 1,
+        'method' => 'cli',
+        'outofbandsupported' => 1,
+      );
+      $response = $this->request('login', $params);
+      $xml = simplexml_load_string($response);
+      $xml = json_decode(json_encode($xml));
+      if (!empty($xml->ok)) {
+        // Save the session information.
+        $root = $xml->ok->{'@attributes'};
+        $this->session = array(
+          'uid' => $root->uid,
+          'sessionid' => $root->sessionid,
+          'privatekeyenc' => $root->privatekeyenc,
+          'lpusername' => $root->lpusername,
+          'email' => $root->email,
+          'pwdeckey' => $root->pwdeckey,
+          'token' => $root->token,
+          'iterations' => $root->iterations,
+          'logloginsvr' => $root->logloginsvr,
+          'loginKey' => $this->loginKey,
+          'decryptionKey' => $this->decryptionKey,
+        );
+        $_SESSION['lastpass'] = $this->session;
+      }
+      elseif (!empty($xml->error)) {
+        throw new LastPassException($xml->error->{'@attributes'}->message);
+      }
+      else {
+        throw new LastPassException("Unexpected response from LastPass server.");
       }
     }
-    catch (Exception $e) {
-      print $e->getMessage();
+
+    if (empty($this->session['privatekey'])) {
+      $this->session['privatekey'] = $_SESSION['lastpass']['privatekey'] = LPCipher::cipherDecryptPrivateKey($this->session['privatekeyenc'], $this->decryptionKey);
     }
+
+    return TRUE;
   }
 
   /**
@@ -1370,4 +1419,8 @@ class LastPass {
       LPUtil::purgeConfigFiles($this->configFileLocation(), $this->options['autodeletetime']);
     }
   }
+}
+
+class LastPassException extends Exception {
+
 }
