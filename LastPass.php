@@ -535,7 +535,8 @@ class LPBlob {
     $blob->position += 4;
 
     $chunk->length = mb_substr($blob->data, $blob->position, 4, '8bit');
-    $chunk->length = reset(unpack("N", $chunk->length));
+    $chunk->length = unpack("N", $chunk->length);
+    $chunk->length = reset($chunk->length);
     $blob->position += 4;
 
     $chunk->data = mb_substr($blob->data, $blob->position, $chunk->length + 4, '8bit');
